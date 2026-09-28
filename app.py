@@ -1,181 +1,93 @@
-# lab_eda_gui.py
+﻿import heapq
+import math
 
-import streamlit as st
-import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+import networkx as nx
+import streamlit as st
 
-# 1. Page Configuration
+st.set_page_config(page_title="Hospital Robot Search", layout="wide")
+st.title("Emergency Supply Robot Search")
+st.write("Compare Greedy Best-First Search and A* on the hospital corridor graph.")
 
-st.set_page_config(
-    page_title="EDA Dashboard",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+locations = {
+    "Pharmacy": (0, 0), "Main_Corridor": (2, 1), "Patient_Wing": (1, 4),
+    "Nursing_Station": (4, 2), "Laboratory": (5, 5), "Emergency_Ward": (8, 6)
+}
+hospital_graph = {
+    "Pharmacy": {"Main_Corridor": 2.2, "Patient_Wing": 4.1},
+    "Main_Corridor": {"Nursing_Station": 2.2},
+    "Patient_Wing": {"Laboratory": 5.0},
+    "Nursing_Station": {"Emergency_Ward": 5.0, "Laboratory": 3.2},
+    "Laboratory": {"Emergency_Ward": 3.6},
+    "Emergency_Ward": {}
+}
 
-st.title("Exploratory Data Analysis Interface")
+def heuristic(node, goal):
+    return math.dist(locations[node], locations[goal])
 
+def search(start, goal, algorithm):
+    frontier = [(heuristic(start, goal), 0, start)]
+    came_from = {start: None}
+    costs = {start: 0}
+    visited = set()
+    order = []
+    while frontier:
+        _, queued_cost, current = heapq.heappop(frontier)
+        if current in visited or (algorithm == "A*" and queued_cost != costs[current]):
+            continue
+        visited.add(current)
+        order.append(current)
+        if current == goal:
+            break
+        for neighbor, edge_cost in hospital_graph[current].items():
+            new_cost = costs[current] + edge_cost
+            if neighbor not in visited and (algorithm == "GBFS" or new_cost < costs.get(neighbor, math.inf)):
+                if algorithm == "GBFS":
+                    came_from.setdefault(neighbor, current)
+                    costs.setdefault(neighbor, new_cost)
+                    priority, queued = heuristic(neighbor, goal), new_cost
+                else:
+                    came_from[neighbor] = current
+                    costs[neighbor] = new_cost
+                    priority, queued = new_cost + heuristic(neighbor, goal), new_cost
+                heapq.heappush(frontier, (priority, queued, neighbor))
+    if goal not in visited:
+        return order, None, None
+    path = []
+    node = goal
+    while node is not None:
+        path.append(node)
+        node = came_from[node]
+    path.reverse()
+    cost = sum(hospital_graph[a][b] for a, b in zip(path, path[1:]))
+    return order, path, cost
 
-# 2. Sidebar: Dataset Ingestion
-
-#set header for sidebar
-st.sidebar.header("Dataset Ingestion")
-
-#create a file uploader in the sidebar for CSV files
-uploaded_file = st.sidebar.file_uploader(
-    "Upload a CSV file",
-    type=["csv"]
-)
-
-if uploaded_file is not None:
-    # Read dataset
-    try:
-        df = pd.read_csv(uploaded_file)
-
-        # Validate that the dataset is not empty
-        if df.empty:
-            st.error("The uploaded CSV file is empty.")
-            st.stop()
-
-    except Exception as e:
-        st.error(f"Invalid CSV file. Please upload a valid CSV dataset.\n\nError: {e}")
-        st.stop()
-
-        
-    # 3. Dataset Overview
-    
-    #set subheader for dataset overview
-    st.subheader("Dataset Overview")
-
-    st.write("**First 5 Rows:**")
-    #display the first 5 rows of the dataset
-    st.dataframe(df.head(5), use_container_width=True)
-
-    #display the shape of the dataset
-    st.write(f"**Dataset Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
-
-    st.write("**Column Data Types:**")
-    #display the data types of each column in the dataset
-    st.dataframe(
-        df.dtypes.astype(str).to_frame("Data Type"),
-        use_container_width=True
-    )
-
-    # Missing value summary
-    st.write("**Missing Values per Column:**")
-    #display the count and percentage of missing values for each column in the dataset
-
-    missing_values = pd.DataFrame({
-        "Missing Count": df.isnull().sum(),
-        "Missing Percentage": (
-            df.isnull().sum() / len(df) * 100
-        ).round(2)
-    })
-
-    st.dataframe(
-        missing_values,
-        use_container_width=True
-    )
-    
-
-    # Basic statistics for numerical columns
-    st.write("**Basic Numerical Statistics:**")
-    #display the basic statistics
-
-    numerical_columns = df.select_dtypes(
-        include="number"
-    ).columns
-
-    if len(numerical_columns) > 0:
-
-        numerical_stats = pd.DataFrame({
-            "Mean": df[numerical_columns].mean(),
-            "Median": df[numerical_columns].median(),
-            "Minimum": df[numerical_columns].min(),
-            "Maximum": df[numerical_columns].max()
-        })
-
-        st.dataframe(
-            numerical_stats,
-            use_container_width=True
-        )
-
+nodes = list(locations)
+left, right = st.columns(2)
+start = left.selectbox("Select Initial Node", nodes, index=nodes.index("Pharmacy"))
+goal = right.selectbox("Select Goal Node", nodes, index=nodes.index("Emergency_Ward"))
+algorithm = st.selectbox("Select Search Algorithm", ["GBFS", "A*"])
+if st.button("Run Search", type="primary"):
+    expansion_order, path, cost = search(start, goal, algorithm)
+    if path is None:
+        st.error("No path was found between the selected locations.")
     else:
-        st.info("No numerical columns found.")
-
-    
-    # 4. Attribute Selection
-    
-    #set header for attribute selection in the sidebar
-    st.sidebar.header("Attribute Selection")
-
-    #create a selectbox in the sidebar to choose an attribute for visualization
-    selected_column = st.sidebar.selectbox(
-        "Select an attribute:",
-        df.columns
-    )
-
-
-    # Detect column type
-
-    if pd.api.types.is_numeric_dtype(df[selected_column]):
-        column_type = "Numerical"
-    else:
-        column_type = "Categorical"
-
-    st.write(f"**Selected Attribute:** {selected_column}")
-    st.write(f"**Attribute Type:** {column_type}")
-
-
-    
-    # 5. Visualization Rendering
-    
-    st.subheader("Visualization")
-
-    if column_type == "Numerical":
-        # Histogram with seaborn
-
-        fig, ax = plt.subplots()
-
-        sns.histplot(
-            data=df,
-            x=selected_column,
-            kde=True,
-            ax=ax
-        )
-
-        ax.set_xlabel(selected_column)
-        ax.set_ylabel("Frequency")
-        ax.set_title(
-            f"Distribution of {selected_column}"
-        )
-
+        st.subheader("Search Result")
+        st.write(f"**Algorithm:** {algorithm}")
+        st.write(f"**Expansion order:** {' → '.join(expansion_order)}")
+        st.write(f"**Solution path:** {' → '.join(path)}")
+        st.write(f"**Total path cost:** {cost:.2f}")
+        G = nx.DiGraph()
+        for node, neighbors in hospital_graph.items():
+            for neighbor, weight in neighbors.items():
+                G.add_edge(node, neighbor, weight=weight)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        nx.draw_networkx_nodes(G, locations, node_size=2400, node_color="lightblue", ax=ax)
+        nx.draw_networkx_edges(G, locations, arrows=True, arrowsize=20, ax=ax)
+        nx.draw_networkx_labels(G, locations, font_size=8, ax=ax)
+        nx.draw_networkx_edge_labels(G, locations, edge_labels=nx.get_edge_attributes(G, "weight"), ax=ax)
+        nx.draw_networkx_edges(G, locations, edgelist=list(zip(path, path[1:])), edge_color="red", width=3, arrows=True, arrowsize=20, ax=ax)
+        ax.set_title(f"{algorithm} Solution Path")
+        ax.axis("off")
         st.pyplot(fig)
 
-    else:
-        # Bar chart for categorical
-
-        value_counts = df[selected_column].fillna(
-            "Missing"
-        ).value_counts()
-
-        fig, ax = plt.subplots()
-
-        sns.barplot(
-            x=value_counts.index,
-            y=value_counts.values,
-            ax=ax
-        )
-
-        ax.set_xlabel(selected_column)
-        ax.set_ylabel("Frequency")
-        ax.set_title(
-            f"Frequency Distribution of {selected_column}"
-        )
-
-        plt.xticks(rotation=45)
-
-        st.pyplot(fig)    
-
-else:
-    st.info("Please upload a CSV file to start EDA.")
